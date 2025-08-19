@@ -1,3 +1,4 @@
+# KODE FINAL UNTUK DEPLOY DI RENDER
 import os
 import json
 import io
@@ -11,19 +12,21 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
-# --- Konfigurasi Awal ---
+# --- Konfigurasi Awal dari Environment Variables/Secrets ---
 TOKEN = os.environ.get('TOKEN_BOT')
 DRIVE_FOLDER_ID = os.environ.get('DRIVE_FOLDER_ID')
 GOOGLE_OAUTH_CREDS_STR = os.environ.get('GOOGLE_OAUTH_CREDS')
 SCOPES = ['https://www.googleapis.com/auth/drive']
 
 # URL redirect harus SAMA PERSIS dengan yang di Google Cloud Console
-REDIRECT_URI = f"https://{os.environ.get('REPL_ID', '')}.replit.dev/oauth2callback" if 'REPL_ID' in os.environ else "http://localhost:8080/oauth2callback"
+# Render.com secara otomatis memberikan URL, kita hanya perlu menambahkan /oauth2callback
+RENDER_EXTERNAL_URL = os.environ.get('RENDER_EXTERNAL_URL')
+REDIRECT_URI = f"{RENDER_EXTERNAL_URL}/oauth2callback" if RENDER_EXTERNAL_URL else "http://localhost:8080/oauth2callback"
 
 drive_service = None
 app = Flask(__name__)
 
-# --- Fungsi Otentikasi & Server Web (BARU) ---
+# --- Fungsi Otentikasi & Server Web ---
 def get_drive_service():
     global drive_service
     creds = None
@@ -47,7 +50,7 @@ def home():
         authorization_url, _ = flow.authorization_url(prompt='consent')
         return f'<h1>Otorisasi Google Diperlukan</h1><p>Silakan klik link berikut untuk memberi izin:</p><p><a href="{authorization_url}">Beri Izin Akses Google Drive</a></p>'
     else:
-        return "<h1>Bot Telegram Aktif dan Terhubung ke Google Drive!</h1><p>Anda bisa menutup tab ini.</p>"
+        return "<h1>Bot Telegram Aktif dan Terhubung ke Google Drive!</h1><p>Anda bisa menutup tab ini. UptimeRobot akan menjaga bot tetap online.</p>"
 
 @app.route('/oauth2callback')
 def oauth2callback():
@@ -59,34 +62,82 @@ def oauth2callback():
     
     html_response = f"""
     <h1>Otorisasi Berhasil!</h1>
-    <p>Sekarang, simpan teks di bawah ini sebagai secret baru di Replit:</p>
+    <p>Sekarang, simpan teks di bawah ini sebagai Environment Variable baru di Render:</p>
     <hr>
     <p><b>KEY:</b> <code>GOOGLE_TOKEN_JSON</code></p>
     <p><b>VALUE:</b></p>
     <textarea rows="10" cols="80" readonly>{token_json}</textarea>
     <hr>
-    <p>Setelah menyimpan secret, hentikan dan jalankan ulang bot-nya.</p>
+    <p>Setelah menyimpan, restart layanan Anda di Render.</p>
     """
     return html_response
 
-# --- Fungsi-fungsi Bot (Sama seperti sebelumnya, tidak ada perubahan) ---
-# ... (Semua fungsi handle_photo, process_photos_job, upload_to_drive tetap sama) ...
-# (Untuk mempersingkat, saya tidak tampilkan lagi di sini, tapi pastikan semua fungsi itu masih ada di bawah bagian ini)
-
+# --- Fungsi-fungsi Bot ---
 async def handle_photo(update, context):
-    # ... (kode handle_photo sama)
-    pass
+    if not drive_service:
+        await update.effective_message.reply_text("Koneksi ke Google Drive belum siap. Selesaikan proses otorisasi terlebih dahulu.")
+        return
+        
+    chat_id = update.effective_chat.id
+    photo_file = update.effective_message.photo[-1]
+
+    if 'pending_photos' not in context.chat_data:
+        context.chat_data['pending_photos'] = []
+    context.chat_data['pending_photos'].append(photo_file)
+
+    old_jobs = context.job_queue.get_jobs_by_name(f"job_{chat_id}")
+    for job in old_jobs:
+        job.schedule_removal()
+    
+    context.job_queue.run_once(process_photos_job, 2, chat_id=chat_id, name=f"job_{chat_id}")
+
 async def process_photos_job(context):
-    # ... (kode process_photos_job sama)
-    pass
+    job = context.job
+    chat_id = job.chat_id
+    photos_to_process = context.chat_data.pop('pending_photos', [])
+    
+    if not photos_to_process:
+        return
+
+    count = len(photos_to_process)
+    await context.bot.send_message(chat_id, f"Menerima {count} foto. Sedang mengupload ke Google Drive...")
+
+    successful_uploads = 0
+    for photo in photos_to_process:
+        try:
+            file = await photo.get_file()
+            file_bytes = await file.download_as_bytearray()
+            file_stream = io.BytesIO(file_bytes)
+            filename = f"telegram_{chat_id}_{photo.file_unique_id}.jpg"
+            if upload_to_drive(file_stream, filename):
+                successful_uploads += 1
+        except Exception as e:
+            print(f"Gagal memproses foto: {e}")
+
+    await context.bot.send_message(chat_id, f"Selesai! {successful_uploads} dari {count} foto berhasil diupload ke Google Drive.")
+
 def upload_to_drive(file_stream, filename):
-    # ... (kode upload_to_drive sama)
-    pass
+    if not drive_service:
+        print("Upload dibatalkan: Drive service tidak terkonfigurasi.")
+        return None
+    try:
+        media = MediaIoBaseUpload(file_stream, mimetype='image/jpeg', resumable=True)
+        request = drive_service.files().create(
+            media_body=media,
+            body={'name': filename, 'parents': [DRIVE_FOLDER_ID]}
+        )
+        response = request.execute()
+        print(f"File '{filename}' berhasil diupload dengan ID: {response.get('id')}")
+        return response
+    except Exception as e:
+        print(f"Gagal mengupload file: {e}")
+        return None
 
 # --- Fungsi Utama untuk Menjalankan Bot ---
 def run_bot():
     if not get_drive_service():
-        print("Bot belum bisa dimulai. Selesaikan proses otorisasi Google terlebih dahulu melalui web.")
+        print("Bot belum bisa dimulai karena token Google Drive tidak ditemukan. Buka URL utama untuk memulai proses otorisasi.")
+        # Kita tidak menghentikan program, agar server web tetap jalan untuk otorisasi
         return
 
     application = Application.builder().token(TOKEN).build()
@@ -96,42 +147,11 @@ def run_bot():
 
 # --- Titik Masuk Program ---
 if __name__ == '__main__':
-    # Pastikan semua fungsi lama masih ada di atas
-    # (Kode di bawah ini adalah salinan dari kode sebelumnya, pastikan fungsi-fungsinya ada)
-    async def handle_photo(update, context):
-        if not drive_service: await update.effective_message.reply_text("Koneksi ke Google Drive belum siap."); return
-        chat_id = update.effective_chat.id; photo_file = update.effective_message.photo[-1]
-        if 'pending_photos' not in context.chat_data: context.chat_data['pending_photos'] = []
-        context.chat_data['pending_photos'].append(photo_file)
-        old_jobs = context.job_queue.get_jobs_by_name(f"job_{chat_id}");
-        for job in old_jobs: job.schedule_removal()
-        context.job_queue.run_once(process_photos_job, 2, chat_id=chat_id, name=f"job_{chat_id}")
+    # Jalankan bot di thread terpisah agar tidak memblokir server web
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
 
-    async def process_photos_job(context):
-        job = context.job; chat_id = job.chat_id; photos_to_process = context.chat_data.pop('pending_photos', [])
-        if not photos_to_process: return
-        count = len(photos_to_process); await context.bot.send_message(chat_id, f"Menerima {count} foto. Mengupload...")
-        successful_uploads = 0
-        for photo in photos_to_process:
-            try:
-                file = await photo.get_file(); file_bytes = await file.download_as_bytearray()
-                file_stream = io.BytesIO(file_bytes); filename = f"telegram_{chat_id}_{photo.file_unique_id}.jpg"
-                if upload_to_drive(file_stream, filename): successful_uploads += 1
-            except Exception as e: print(f"Gagal proses foto: {e}")
-        await context.bot.send_message(chat_id, f"Selesai! {successful_uploads} dari {count} foto berhasil diupload.")
-
-    def upload_to_drive(file_stream, filename):
-        if not drive_service: return None
-        try:
-            media = MediaIoBaseUpload(file_stream, mimetype='image/jpeg', resumable=True)
-            request = drive_service.files().create(media_body=media, body={'name': filename, 'parents': [DRIVE_FOLDER_ID]});
-            response = request.execute(); print(f"File '{filename}' diupload, ID: {response.get('id')}"); return response
-        except Exception as e: print(f"Gagal upload: {e}"); return None
-
-    # Jalankan server web Flask di thread terpisah
-    flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=8080))
-    flask_thread.daemon = True
-    flask_thread.start()
-    
-    # Jalankan bot
-    run_bot()
+    # Jalankan server web Flask sebagai proses utama
+    # gunicorn akan menjalankan 'app' ini
+    # app.run(host='0.0.0.0', port=8080)
