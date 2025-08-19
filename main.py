@@ -2,6 +2,7 @@ import os
 import json
 import io
 import threading
+import asyncio # <--- TAMBAHKAN INI
 from flask import Flask, request, redirect
 from telegram.ext import Application, MessageHandler, filters
 
@@ -11,7 +12,7 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
-# --- Konfigurasi Awal dari Environment Variables/Secrets ---
+# --- Konfigurasi Awal (Tidak ada perubahan) ---
 TOKEN = os.environ.get('TOKEN_BOT')
 DRIVE_FOLDER_ID = os.environ.get('DRIVE_FOLDER_ID')
 GOOGLE_OAUTH_CREDS_STR = os.environ.get('GOOGLE_OAUTH_CREDS')
@@ -23,52 +24,38 @@ REDIRECT_URI = f"{RENDER_EXTERNAL_URL}/oauth2callback" if RENDER_EXTERNAL_URL el
 drive_service = None
 app = Flask(__name__)
 
-# --- Fungsi Otentikasi & Server Web ---
+# --- Fungsi Otentikasi & Server Web (Tidak ada perubahan) ---
 def get_drive_service():
-    global drive_service
-    creds = None
+    # ... (kode sama persis)
+    global drive_service; creds = None
     if 'GOOGLE_TOKEN_JSON' in os.environ:
         try:
-            token_info = json.loads(os.environ['GOOGLE_TOKEN_JSON'])
-            creds = Credentials.from_authorized_user_info(token_info, SCOPES)
-            drive_service = build('drive', 'v3', credentials=creds)
-            print("Berhasil terhubung ke Google Drive dengan token yang ada.")
-            return True
+            token_info = json.loads(os.environ['GOOGLE_TOKEN_JSON']); creds = Credentials.from_authorized_user_info(token_info, SCOPES)
+            drive_service = build('drive', 'v3', credentials=creds); print("Berhasil terhubung ke Google Drive dengan token yang ada."); return True
         except Exception as e:
-            print(f"Gagal memuat token: {e}")
-            return False
+            print(f"Gagal memuat token: {e}"); return False
     return False
 
 @app.route('/')
 def home():
+    # ... (kode sama persis)
     if not get_drive_service():
-        if not GOOGLE_OAUTH_CREDS_STR:
-            return "<h1>Error: GOOGLE_OAUTH_CREDS belum diatur di Environment Variables.</h1>"
-        creds_info = json.loads(GOOGLE_OAUTH_CREDS_STR)
-        flow = Flow.from_client_config(creds_info, scopes=SCOPES, redirect_uri=REDIRECT_URI)
-        authorization_url, _ = flow.authorization_url(prompt='consent')
-        return f'<h1>Otorisasi Google Diperlukan</h1><p>Silakan klik link berikut untuk memberi izin:</p><p><a href="{authorization_url}">Beri Izin Akses Google Drive</a></p>'
+        if not GOOGLE_OAUTH_CREDS_STR: return "<h1>Error: GOOGLE_OAUTH_CREDS belum diatur.</h1>"
+        creds_info = json.loads(GOOGLE_OAUTH_CREDS_STR); flow = Flow.from_client_config(creds_info, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+        authorization_url, _ = flow.authorization_url(prompt='consent'); return f'<h1>Otorisasi Google Diperlukan</h1><p><a href="{authorization_url}">Beri Izin Akses Google Drive</a></p>'
     else:
-        return "<h1>Bot Telegram Aktif dan Terhubung ke Google Drive!</h1><p>Anda bisa menutup tab ini. UptimeRobot akan menjaga bot tetap online.</p>"
+        return "<h1>Bot Telegram Aktif dan Terhubung ke Google Drive!</h1><p>UptimeRobot akan menjaga bot tetap online.</p>"
 
 @app.route('/oauth2callback')
 def oauth2callback():
-    creds_info = json.loads(GOOGLE_OAUTH_CREDS_STR)
-    flow = Flow.from_client_config(creds_info, scopes=SCOPES, redirect_uri=REDIRECT_URI)
-    flow.fetch_token(authorization_response=request.url)
-    creds = flow.credentials
-    token_json = creds.to_json()
-    html_response = f"""
-    <h1>Otorisasi Berhasil!</h1>
-    <p>Sekarang, simpan teks di bawah ini sebagai Environment Variable baru di Render:</p><hr>
-    <p><b>KEY:</b> <code>GOOGLE_TOKEN_JSON</code></p><p><b>VALUE:</b></p>
-    <textarea rows="10" cols="80" readonly>{token_json}</textarea><hr>
-    <p>Setelah menyimpan, restart layanan Anda di Render (di menu 'Manual Deploy').</p>
-    """
-    return html_response
+    # ... (kode sama persis)
+    creds_info = json.loads(GOOGLE_OAUTH_CREDS_STR); flow = Flow.from_client_config(creds_info, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+    flow.fetch_token(authorization_response=request.url); creds = flow.credentials; token_json = creds.to_json()
+    return f"""<h1>Otorisasi Berhasil!</h1><p>Simpan teks di bawah ini sebagai Environment Variable baru di Render:</p><hr><p><b>KEY:</b> <code>GOOGLE_TOKEN_JSON</code></p><p><b>VALUE:</b></p><textarea rows="10" cols="80" readonly>{token_json}</textarea><hr><p>Setelah menyimpan, restart layanan Anda di Render.</p>"""
 
 # --- Fungsi-fungsi Bot (Tidak ada perubahan) ---
 async def handle_photo(update, context):
+    # ... (kode sama persis)
     if not drive_service: await update.effective_message.reply_text("Koneksi ke Google Drive belum siap."); return
     chat_id = update.effective_chat.id; photo_file = update.effective_message.photo[-1]
     if 'pending_photos' not in context.chat_data: context.chat_data['pending_photos'] = []
@@ -78,6 +65,7 @@ async def handle_photo(update, context):
     context.job_queue.run_once(process_photos_job, 2, chat_id=chat_id, name=f"job_{chat_id}")
 
 async def process_photos_job(context):
+    # ... (kode sama persis)
     job = context.job; chat_id = job.chat_id; photos_to_process = context.chat_data.pop('pending_photos', [])
     if not photos_to_process: return
     count = len(photos_to_process); await context.bot.send_message(chat_id, f"Menerima {count} foto. Mengupload...")
@@ -91,6 +79,7 @@ async def process_photos_job(context):
     await context.bot.send_message(chat_id, f"Selesai! {successful_uploads} dari {count} foto berhasil diupload.")
 
 def upload_to_drive(file_stream, filename):
+    # ... (kode sama persis)
     if not drive_service: return None
     try:
         media = MediaIoBaseUpload(file_stream, mimetype='image/jpeg', resumable=True)
@@ -101,6 +90,13 @@ def upload_to_drive(file_stream, filename):
 # --- Fungsi Utama untuk Menjalankan Bot ---
 def run_bot():
     """Memeriksa token dan menjalankan bot."""
+    # ==== PERUBAHAN DI SINI ====
+    # 1. Buat event loop baru untuk thread ini
+    loop = asyncio.new_event_loop()
+    # 2. Atur sebagai event loop saat ini
+    asyncio.set_event_loop(loop)
+    # ==========================
+
     if not get_drive_service():
         print("Bot tidak dimulai. Menunggu otorisasi Google melalui web.")
         return
@@ -110,16 +106,9 @@ def run_bot():
     print("Bot Telegram siap menerima foto...")
     application.run_polling()
 
-# ===================================================================
-# ==== BAGIAN INI YANG BERUBAH TOTAL ================================
-# ===================================================================
-
-# Gunicorn akan menjalankan variabel 'app' di atas.
-# Saat Gunicorn meng-import file ini, kode di bawah ini akan langsung dieksekusi.
+# --- Titik Masuk Program (Tidak ada perubahan) ---
 print("Memulai thread untuk bot Telegram...")
 bot_thread = threading.Thread(target=run_bot)
 bot_thread.daemon = True
 bot_thread.start()
 print("Thread bot telah dimulai. Server web akan dijalankan oleh Gunicorn.")
-
-# Kita tidak lagi butuh if __name__ == '__main__' untuk Render
